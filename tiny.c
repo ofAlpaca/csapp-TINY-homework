@@ -14,9 +14,14 @@ void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs, int headOnly);
 void clienterror(int fd, char *cause, char *errnum, 
 		 char *shortmsg, char *longmsg);
+void improve_Rio_writen(int fd, void *usrbuf, size_t n);
 
 int main(int argc, char **argv) 
 {
+    
+    if(Signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+        unix_error("mask signal pipe error");
+    
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
@@ -35,7 +40,8 @@ int main(int argc, char **argv)
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
                     port, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", hostname, port);
-	doit(connfd);                                             //line:netp:tiny:doit
+    // sleep(1);
+    doit(connfd);                                             //line:netp:tiny:doit
 	Close(connfd);                                            //line:netp:tiny:close
     }
 }
@@ -185,7 +191,7 @@ void serve_static(int fd, char *filename, int filesize, int headOnly)
     sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
-    Rio_writen(fd, buf, strlen(buf));       //line:netp:servestatic:endserve
+    improve_Rio_writen(fd, buf, strlen(buf));       //line:netp:servestatic:endserve
     printf("Response headers:\n");
     printf("%s", buf);
 
@@ -196,7 +202,7 @@ void serve_static(int fd, char *filename, int filesize, int headOnly)
         fbuf = malloc(filesize);
         Rio_readn(srcfd, fbuf, filesize);
         Close(srcfd);
-        Rio_writen(fd, fbuf, filesize);
+        improve_Rio_writen(fd, fbuf, filesize);
         free(fbuf);
         
         /*
@@ -280,3 +286,14 @@ void clienterror(int fd, char *cause, char *errnum,
     Rio_writen(fd, body, strlen(body));
 }
 /* $end clienterror */
+
+void improve_Rio_writen(int fd, void *usrbuf, size_t n) {
+    if(rio_writen(fd, usrbuf, n) != n){
+        if(errno == EPIPE){
+            //unix_error("pipe crack");
+            printf("client side has disconnected\n");
+        }
+        else
+            unix_error("Rio_writen error");
+    }
+}
