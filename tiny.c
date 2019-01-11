@@ -14,13 +14,12 @@ void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs, int headOnly);
 void clienterror(int fd, char *cause, char *errnum, 
 		 char *shortmsg, char *longmsg);
-void improve_Rio_writen(int fd, void *usrbuf, size_t n);
+int improve_Rio_writen(int fd, void *usrbuf, size_t n);
 
 int main(int argc, char **argv) 
 {
     
-    if(Signal(SIGPIPE, SIG_IGN) == SIG_ERR)
-        unix_error("mask signal pipe error");
+    Signal(SIGPIPE, SIG_IGN);
     
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
@@ -40,7 +39,6 @@ int main(int argc, char **argv)
         Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, 
                     port, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", hostname, port);
-    // sleep(1);
     doit(connfd);                                             //line:netp:tiny:doit
 	Close(connfd);                                            //line:netp:tiny:close
     }
@@ -191,7 +189,7 @@ void serve_static(int fd, char *filename, int filesize, int headOnly)
     sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
     sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
-    improve_Rio_writen(fd, buf, strlen(buf));       //line:netp:servestatic:endserve
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ;
     printf("Response headers:\n");
     printf("%s", buf);
 
@@ -244,16 +242,16 @@ void serve_dynamic(int fd, char *filename, char *cgiargs, int headOnly)
 
     /* Return first part of HTTP response */
     sprintf(buf, "HTTP/1.0 200 OK\r\n"); 
-    Rio_writen(fd, buf, strlen(buf));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
     sprintf(buf, "Server: Tiny Web Server\r\n");
-    Rio_writen(fd, buf, strlen(buf));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
 
     if (!headOnly) {
         if (Fork() == 0) { /* Child */ //line:netp:servedynamic:fork
-        /* Real server would set all CGI vars here */
-        setenv("QUERY_STRING", cgiargs, 1); //line:netp:servedynamic:setenv
-        Dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */ //line:netp:servedynamic:dup2
-        Execve(filename, emptylist, environ); /* Run CGI program */ //line:netp:servedynamic:execve
+            /* Real server would set all CGI vars here */
+            setenv("QUERY_STRING", cgiargs, 1); //line:netp:servedynamic:setenv
+            Dup2(fd, STDOUT_FILENO);         /* Redirect stdout to client */ //line:netp:servedynamic:dup2
+            Execve(filename, emptylist, environ); /* Run CGI program */ //line:netp:servedynamic:execve
         }
         Wait(NULL); /* Parent waits for and reaps child */ //line:netp:servedynamic:wait
     }
@@ -278,22 +276,22 @@ void clienterror(int fd, char *cause, char *errnum,
 
     /* Print the HTTP response */
     sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-    Rio_writen(fd, buf, strlen(buf));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
     sprintf(buf, "Content-type: text/html\r\n");
-    Rio_writen(fd, buf, strlen(buf));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
     sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-    Rio_writen(fd, buf, strlen(buf));
-    Rio_writen(fd, body, strlen(body));
+    if( improve_Rio_writen(fd, buf, strlen(buf)) == -1) return ; // if the client is disconnected, then return
+    if( improve_Rio_writen(fd, body, strlen(body)) == -1) return ; // if the client is disconnected, then return
 }
 /* $end clienterror */
 
-void improve_Rio_writen(int fd, void *usrbuf, size_t n) {
+int improve_Rio_writen(int fd, void *usrbuf, size_t n) {
     if(rio_writen(fd, usrbuf, n) != n){
-        if(errno == EPIPE){
-            //unix_error("pipe crack");
+        if(errno == EPIPE)
             printf("client side has disconnected\n");
-        }
         else
             unix_error("Rio_writen error");
+        return -1;
     }
+    return 0;
 }
